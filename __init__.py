@@ -7,4 +7,3 @@ try:
     from form import *
 except ImportError:
 	pass
-

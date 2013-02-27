@@ -1,5 +1,5 @@
 from __future__ import print_function  # need print func in lambda
-# from __future__ import division  # true division from integers
+from __future__ import division  # true division from integers
 
 """Hypid - geometry generation and machine control
 
@@ -27,7 +27,8 @@ Running FreeCAD standalone in Ubuntu
 """
 
 import random
-import transformations as xf
+# import transformations as xf
+import euclid
 
 
 __author__  = 'Stefan Hechenberger <stefan@nortd.com>'
@@ -36,7 +37,9 @@ __license__ = 'GPL3'
 __docformat__ = 'restructuredtext en'
 __all__ = ['get_active_view', 'refresh_view', 'view_all', 'view_selected',
            'clear_selection', 'get_selected', 'make_line', 'make_circle', 
-           'make_interpolation_curve', 'make_random_curve']
+           'make_interpolation_curve', 'make_random_curve',
+           'P','V', 'M', 'tM', 'sM', 'rM', 'raM', 'rxM', 'ryM', 'rzM',
+           'Q', 'aQ', 'eQ', 'mQ', 'iQ']
 
 
 
@@ -98,7 +101,66 @@ class BaseForm():
 
     # Transformations
     # def transform_shape(self, mat): pass
-    def transform_geometry(self, mat): pass
+    def transform(self, mat): pass
+    def translate(self, x, y, z):
+        self.transform(tM(x, y, z))
+    def scale(self, x, y, z, center=(0,0,0)):
+        if center == V():
+            mat = sM(x,y,z)
+        else:
+            mat = (tM(center[0], center[1], center[2]) * 
+                   sM(x,y,z) * 
+                   tM(-center[0], -center[1], -center[2]))
+        self.transform(mat)
+    def rotate(self, x, y, z, center=(0,0,0)):
+        if center == V():
+            mat = rM(y,z,x)
+        else:
+            mat = (tM(center[0], center[1], center[2]) * 
+                   rM(y,z,x) * 
+                   tM(-center[0], -center[1], -center[2]))
+        self.transform(mat)
+    def rotatex(self, angle, center=(0,0,0)):
+        if center == V():
+            mat = rxM(angle)
+        else:
+            mat = (tM(center[0], center[1], center[2]) * 
+                   rxM(angle) * 
+                   tM(-center[0], -center[1], -center[2]))
+        self.transform(mat)
+    def rotatey(self, angle, center=(0,0,0)):
+        if center == V():
+            mat = ryM(angle)
+        else:
+            mat = (tM(center[0], center[1], center[2]) * 
+                   ryM(angle) * 
+                   tM(-center[0], -center[1], -center[2]))
+        self.transform(mat)
+    def rotatez(self, angle, center=(0,0,0)):
+        if center == V():
+            mat = rzM(angle)
+        else:
+            mat = (tM(center[0], center[1], center[2]) * 
+                   rzM(angle) * 
+                   tM(-center[0], -center[1], -center[2]))
+        self.transform(mat)
+    def rotate_axis(self, angle, axis, center=(0,0,0)):
+        if center == V():
+            mat = raM(angle, axis)
+        else:
+            mat = (tM(center[0], center[1], center[2]) * 
+                   raM(angle, axis) * 
+                   tM(-center[0], -center[1], -center[2]))
+        self.transform(mat)
+    def rotate_quat(self, quaternion, center=(0,0,0)):
+        if center == V():
+            mat = quaternion.get_matrix()
+        else:
+            mat = (tM(center[0], center[1], center[2]) * 
+                   quaternion.get_matrix() * 
+                   tM(-center[0], -center[1], -center[2]))
+        self.transform(mat)
+
 
 
 
@@ -373,11 +435,15 @@ class FreeCadForm(BaseForm):
     # def transform_shape(self, matrix):
     #     self.obj.transformShape()
 
-    def transform_geometry(self, mat):
-        fmat = FreeCAD.Matrix(mat[0][0],mat[0][1], mat[0][2],mat[0][3],
-                              mat[1][0],mat[1][1], mat[1][2],mat[1][3],
-                              mat[2][0],mat[2][1], mat[2][2],mat[2][3],
-                              mat[3][0],mat[3][1], mat[3][2],mat[3][3])
+    def transform(self, mat):
+        # fmat = FreeCAD.Matrix(mat[0][0],mat[0][1], mat[0][2],mat[0][3],
+        #                       mat[1][0],mat[1][1], mat[1][2],mat[1][3],
+        #                       mat[2][0],mat[2][1], mat[2][2],mat[2][3],
+        #                       mat[3][0],mat[3][1], mat[3][2],mat[3][3])
+        fmat = FreeCAD.Matrix(mat[0],mat[4], mat[8],mat[12],
+                              mat[1],mat[5], mat[9],mat[13],
+                              mat[2],mat[6], mat[10],mat[14],
+                              mat[3],mat[7], mat[11],mat[15])
         self.obj.Shape = self.obj.Shape.transformGeometry(fmat)
 
 
@@ -625,7 +691,7 @@ class RhinoForm(BaseForm):
     # def transform_shape(self, matrix):
     #     self.obj.transformShape()
 
-    def transform_geometry(self, mat):
+    def transform(self, mat):
         rs.TransformObject(self.obj, mat.tolist())
 
 
@@ -648,16 +714,32 @@ except ImportError:
 
 
 # ############################################################################
-# Aliases of classmethods
+# Aliases
 # App-level
 get_active_view = App.get_active_view
 refresh_view = App.refresh_view
 view_all = App.view_all
 view_selected = App.view_selected
 clear_selection = App.clear_selection
-# Factories
+# Form Factories
 get_selected = Form.get_selected
 make_line = Form.make_line
 make_circle = Form.make_circle
 make_interpolation_curve = Form.make_interpolation_curve
 make_random_curve = Form.make_random_curve
+# Transformations
+P = euclid.Point3                           # x, y, z
+V = euclid.Vector3                          # x, y, z
+M = euclid.Matrix4                          #
+tM = euclid.Matrix4.new_translate            # x, y, z
+sM = euclid.Matrix4.new_scale               # x, y, z
+rM = euclid.Matrix4.new_rotate_euler        # x, y, z
+rxM = euclid.Matrix4.new_rotatex            # angle
+ryM = euclid.Matrix4.new_rotatey            # angle
+rzM = euclid.Matrix4.new_rotatez            # angle
+raM = euclid.Matrix4.new_rotate_axis        # angle, axis
+Q = euclid.Quaternion                       #
+aQ = euclid.Quaternion.new_rotate_axis      # angle, axis
+eQ = euclid.Quaternion.new_rotate_euler     # heading, attitude, bank
+mQ = euclid.Quaternion.new_rotate_matrix    # mat
+iQ = euclid.Quaternion.new_interpolate      # q1, q2, t
