@@ -1,4 +1,5 @@
 from __future__ import print_function  # need print func in lambda
+# from __future__ import division  # true division from integers
 
 """Hypid - geometry generation and machine control
 
@@ -25,6 +26,7 @@ Running FreeCAD standalone in Ubuntu
 
 """
 
+import random
 import transformations as xf
 
 
@@ -32,7 +34,8 @@ __author__  = 'Stefan Hechenberger <stefan@nortd.com>'
 __version__ = '2013.02'
 __license__ = 'GPL3'
 __docformat__ = 'restructuredtext en'
-__all__ = ['clear_selection', 'get_selected', 'make_line', 'make_circle']
+__all__ = ['clear_selection', 'get_selected', 'make_line', 'make_circle', 
+           'make_interpolation_curve', 'make_random_curve']
 
 
 
@@ -59,6 +62,7 @@ class BaseForm():
     def get_selected(cls): pass
     def make_line(cls, p1, p2): pass
     def make_circle(cls, p1, p2): pass
+    def make_interpolation_curve(cls, pts): pass
     # Document Methods
     def get_active_view(self): pass
     def refresh_view(self): pass
@@ -69,18 +73,28 @@ class BaseForm():
     def unselect(self): pass
     def is_selected(self): pass
     # Geometry Classification
-    def is_line(self): pass
     def is_curve(self): pass
+    def is_line_curve(self): pass
+    def is_planar_curve(self): pass  # TODO: implement in FreeCAD
+    def is_closed_curve(self): pass
     # Curve Methods
     def length(self): pass
-    def value_at(self, param): pass
-    def normal_at(self, param): pass
-    def tangent_at(self, param): pass
-    def curvature_at(self, param): pass
-    def center_of_curvature_at(self, param): pass
-    def derivative1_at(self, param): pass
-    def derivative2_at(self, param): pass
-    def derivative3_at(self, param): pass
+    def value_at(self, t, paramNormalized=True): pass
+    def tangent_at(self, t, paramNormalized=True): pass
+    def curvature_at(self, t, paramNormalized=True): pass
+    def center_of_curvature_at(self, t, paramNormalized=True): pass
+    def derivative1_at(self, t, paramNormalized=True): pass
+    def derivative2_at(self, t, paramNormalized=True): pass
+    def derivative3_at(self, t, paramNormalized=True): pass
+    def closest_curve_point(self, pt): pass
+    def tessellate(self, param): pass
+    # Surface Methods
+    # def normal_at(self, u, v, paramNormalized=True): pass
+    # General Geometry Methods
+
+    # Transformations
+    def transform_shape(self, mat): pass
+    def transform_geometry(self, mat): pass
 
 
 
@@ -120,13 +134,9 @@ class FreeCadForm(BaseForm):
 
     @classmethod
     def make_line(cls, p1, p2):
-        if type(p1) == list:
-            p1 = tuple(p1)
-        if type(p2) == list:
-            p2 = tuple(p2)
         self = cls()
         self.obj = FreeCAD.ActiveDocument.addObject("Part::Feature","hyLine")
-        shape = Part.makeLine(p1, p2)  # Part.TopoShape
+        shape = Part.makeLine(tuple(p1), tuple(p2))  # Part.TopoShape
         self.obj.Shape = shape
         # self.obj = Part.makeLine(p1, p2)
         # Part.show(self.obj)
@@ -143,6 +153,35 @@ class FreeCadForm(BaseForm):
         self.obj.Shape = circ.toShape()
         # shape = Part.makeCircle(r)
         # obj.Shape = shape
+        return self
+
+    @classmethod
+    def make_interpolation_curve(cls, pts):
+        self = cls()
+        self.obj = FreeCAD.ActiveDocument.addObject("Part::Feature","hyCurve")
+        crv = Part.BSplineCurve()  # Part.GeomCircle
+        pts_tuples = []  # make sure points are tuples
+        for pt in pts:
+            pts_tuples.append(tuple(pt))
+        crv.interpolate(pts_tuples)
+        self.obj.Shape = crv.toShape()
+        return self
+
+    @classmethod
+    def make_random_curve(cls, nPts=4, xr=(0,1), yr=(0,1), zr=(0,0), xsigma=0.5):
+        nPts = int(nPts)
+        if nPts == 0: return None
+        self = cls()
+        self.obj = FreeCAD.ActiveDocument.addObject("Part::Feature","hyCurve")
+        crv = Part.BSplineCurve()
+        pts = []
+        step = float(xr[1]-xr[0])/nPts
+        for i in range(nPts):
+            pts.append((random.gauss(xr[0]+i*step, xsigma*step),
+                        random.uniform(yr[0],yr[1]),
+                        random.uniform(zr[0],zr[1])))
+        crv.interpolate(pts)
+        self.obj.Shape = crv.toShape()
         return self
 
 
@@ -190,15 +229,22 @@ class FreeCadForm(BaseForm):
     # ###########################################
     # Geometry Classification
 
-    # def is_line(self):
-    #     return self.obj.isDerivedFrom("Part::Feature") and \
-    #            self.obj.Shape and self.obj.Shape.isValid()
-
     def is_curve(self):
         """Is this a single curve."""
-        return self.obj.isDerivedFrom("Part::Feature") and \
-               self.obj.Shape and self.obj.Shape.isValid() and \
-               len(self.obj.Shape.Edges) == 1
+        return hasattr(self.obj.Shape, 'Curve')
+        # return self.obj.isDerivedFrom("Part::Feature") and \
+        #        self.obj.Shape and self.obj.Shape.isValid() and \
+        #        len(self.obj.Shape.Edges) == 1
+
+    def is_line_curve(self):
+        return self.is_curve and type(self.obj.Shape.Curve) == Part.Line
+        # return self.is_curve and (len(self.obj.Shape.Edges[0].Vertexes) == 2)
+
+    def is_planar_curve(self):
+        self.error("not implemented")
+
+    def is_closed_curve(self):
+        return self.is_curve and self.obj.Shape.isClosed()
 
 
     # ###########################################
@@ -211,70 +257,113 @@ class FreeCadForm(BaseForm):
             self.error("not a curve")
             return None
 
-    def value_at(self, param):
+    def value_at(self, t, paramNormalized=True):
         """param: 0 to 1.0"""
         if self.is_curve():
-            return self.obj.Shape.Edges[0].valueAt(self.obj.Shape.Length*param)
+            if paramNormalized: t = self._param_from_normalized(t)
+            return self.obj.Shape.Edges[0].valueAt(t)
         else:
             self.error("not a curve")
             return None
 
-    def normal_at(self, param):
+    def tangent_at(self, t, paramNormalized=True):
         if self.is_curve():
-            return self.obj.Shape.Edges[0].normalAt(param)
+            if paramNormalized: t = self._param_from_normalized(t)
+            return self.obj.Shape.Edges[0].tangentAt(t)
         else:
             self.error("not a curve")
             return None
 
-    def tangent_at(self, param):
+    def curvature_at(self, t, paramNormalized=True):
         if self.is_curve():
-            return self.obj.Shape.tangentAt(param)
+            if paramNormalized: t = self._param_from_normalized(t)
+            return self.obj.Shape.Edges[0].curvatureAt(t)
         else:
             self.error("not a curve")
             return None
 
-    def curvature_at(self, param):
+    def center_of_curvature_at(self, t, paramNormalized=True):
+        # TODO: getting an exception
         if self.is_curve():
-            return self.obj.Shape.curvatureAt(param)
+            if paramNormalized: t = self._param_from_normalized(t)
+            return self.obj.Shape.Edges[0].centerOfCurvatureAt(t)
         else:
             self.error("not a curve")
             return None
 
-    def center_of_curvature_at(self, param):
+    def derivative1_at(self, t, paramNormalized=True):
         if self.is_curve():
-            return self.obj.Shape.centerOfCurvatureAt(param)
+            if paramNormalized: t = self._param_from_normalized(t)
+            return self.obj.Shape.Edges[0].derivative1At(t)
         else:
             self.error("not a curve")
             return None
 
-    def derivative1_at(self, param):
+    def derivative2_at(self, t, paramNormalized=True):
         if self.is_curve():
-            return self.obj.Shape.derivative1At(param)
+            if paramNormalized: t = self._param_from_normalized(t)
+            return self.obj.Shape.Edges[0].derivative2At(t)
         else:
             self.error("not a curve")
             return None
 
-    def derivative2_at(self, param):
+    def derivative3_at(self, t, paramNormalized=True):
         if self.is_curve():
-            return self.obj.Shape.derivative2At(param)
+            if paramNormalized: t = self._param_from_normalized(t)
+            return self.obj.Shape.Edges[0].derivative3At(t)
         else:
             self.error("not a curve")
             return None
 
-    def derivative3_at(self, param):
+    def closest_curve_point(self, pt):
         if self.is_curve():
-            return self.obj.Shape.derivative3At(param)
+            return self.obj.Shape.Curve.parameter(FreeCAD.Vector(pt[0],pt[1],pt[2]))
         else:
             self.error("not a curve")
             return None
-    
+
+    def tessellate(self, num):
+        """Return a list of points (vectors).
+        param: number of points
+               if under 1 then parameter t increment
+        """
+        if self.is_curve():
+            return self.obj.Shape.Curve.discretize(num)
+        else:
+            self.error("not a curve")
+            return None
+
+    def _param_from_normalized(self, t):
+        # same as 0-self.obj.Shape.Length ?
+        return self.Shape.FirstParameter + \
+               t*(self.Shape.LastParameter-self.Shape.FirstParameter)
+
+
+    # ###########################################
+    # Surface Methods
+
+    # def normal_at(self, u, v, paramNormalized=True):
+    #     # TODO: getting an exception
+    #     if self.is_curve():
+    #         if paramNormalized: t = self._param_from_normalized(t)
+    #         return self.obj.Shape.Edges[0].normalAt(t)
+    #     else:
+    #         self.error("not a curve")
+    #         return None
+
 
     # ###########################################
     # Transformations
 
-    def transform_shape(self, matrix):
-        pass
+    # def transform_shape(self, matrix):
+    #     self.obj.transformShape()
 
+    def transform_geometry(self, mat):
+        fmat = FreeCAD.Matrix(mat[0][0],mat[0][1], mat[0][2],mat[0][3],
+                              mat[1][0],mat[1][1], mat[1][2],mat[1][3],
+                              mat[2][0],mat[2][1], mat[2][2],mat[2][3],
+                              mat[3][0],mat[3][1], mat[3][2],mat[3][3])
+        self.obj.Shape = self.obj.Shape.transformGeometry(fmat)
 
 
 
@@ -324,7 +413,28 @@ class RhinoForm(BaseForm):
         self.obj = rs.AddCircle(rs.WorldXYPlane(), r)
         return self
 
+    @classmethod
+    def make_interpolation_curve(cls, pts):
+        self = cls()
+        self.obj = rs.AddInterpCurve(pts)
+        return self
 
+    @classmethod
+    def make_random_curve(cls, nPts=4, xr=(0,1), yr=(0,1), zr=(0,0), xsigma=0.5):
+        nPts = int(nPts)
+        if nPts == 0: return None
+        self = cls()
+        pts = []
+        step = float(xr[1]-xr[0])/nPts
+        for i in range(nPts):
+            pts.append((random.gauss(xr[0]+i*step, xsigma*step),
+                        random.uniform(yr[0],yr[1]),
+                        random.uniform(zr[0],zr[1])))
+        self.obj = rs.AddInterpCurve(pts)
+        self.obj.Shape = crv.toShape()
+        return self
+
+        
     # ###########################################
     # Document Methods
 
@@ -359,12 +469,17 @@ class RhinoForm(BaseForm):
     # ###########################################
     # Geometry Classification
 
-    def is_line(self):
-        return rs.IsLine(self.obj)
-
     def is_curve(self):
         return rs.IsCurve(self.obj)
 
+    def is_line_curve(self):
+        return rs.IsLine(self.obj)
+
+    def is_planar_curve(self):
+        return rs.IsCurvePlanar(self.obj)
+
+    def is_closed_curve(self):
+        return rs.IsCurveClosed(self.obj)
 
     # ###########################################
     # Curve Methods
@@ -376,66 +491,119 @@ class RhinoForm(BaseForm):
             self.error("not a curve")
             return None
 
-    def value_at(self, param):
-        """param: 0 to 1.0"""
+    def value_at(self, t, paramNormalized=True):
+        """Return point at paramter t in space of the curve.
+
+        FYI: While parameter space is evenly distributed for some curves,
+        this is not true for NURBS. They are more widely spaced towards
+        the ends, and more closely spaced at areas of dense control
+        points and more weighted CPs.
+        """
         if self.is_curve():
-            domain = rs.CurveDomain(self.obj)
-            return rs.EvaluateCurve(obj, domain[1]*param)
+            if paramNormalized: t = self._param_from_normalized(t)
+            return rs.EvaluateCurve(t)   
         else:
             self.error("not a curve")
             return None
 
-    def normal_at(self, param):
-        if self.is_curve() and self.is_planar():
-            return rs.CurveNormal(self.obj)
-            return self.obj.normalAt(param)
+    def tangent_at(self, t, paramNormalized=True):
+        if self.is_curve():
+            if paramNormalized: t = self._param_from_normalized(t)
+            return rs.CurveTangent(self.obj, t)
         else:
             self.error("not a curve")
             return None
 
-    def tangent_at(self, param):
+    def curvature_at(self, t, paramNormalized=True):
         if self.is_curve():
-            return self.obj.tangentAt(param)
+            if paramNormalized: t = self._param_from_normalized(t)
+            curvatureObj = rs.CurveCurvature(self.obj, t)
+            if curvatureObj:
+                return curvatureObj[3]
+                # curvatureObj[0]  ... point
+                # curvatureObj[1]  ... tangent
+                # curvatureObj[2]  ... center of circle
+                # curvatureObj[4]  ... curvature vector
+            else:
+                return None
         else:
             self.error("not a curve")
             return None
 
-    def curvature_at(self, param):
+    def center_of_curvature_at(self, t, paramNormalized=True):
         if self.is_curve():
-            return self.obj.curvatureAt(param)
+            if paramNormalized: t = self._param_from_normalized(t)
+            curvatureObj = rs.CurveCurvature(self.obj, t)
+            if curvatureObj:
+                return curvatureObj[2]
+            else:
+                return None
         else:
             self.error("not a curve")
             return None
 
-    def center_of_curvature_at(self, param):
+    def derivative1_at(self, t, paramNormalized=True):
         if self.is_curve():
-            return self.obj.centerOfCurvatureAt(param)
-        else:
-            self.error("not a curve")
-            return None
-
-    def derivative1_at(self, param):
-        if self.is_curve():
+            if paramNormalized: t = self._param_from_normalized(t)
             return self.obj.derivative1At(param)
         else:
             self.error("not a curve")
             return None
 
-    def derivative2_at(self, param):
+    def derivative2_at(self, t, paramNormalized=True):
         if self.is_curve():
+            if paramNormalized: t = self._param_from_normalized(t)
             return self.obj.derivative2At(param)
         else:
             self.error("not a curve")
             return None
 
-    def derivative3_at(self, param):
+    def derivative3_at(self, t, paramNormalized=True):
         if self.is_curve():
+            if paramNormalized: t = self._param_from_normalized(t)
             return self.obj.derivative3At(param)
         else:
             self.error("not a curve")
             return None
 
+    def closest_curve_point(self, pt):
+        if self.is_curve():
+            return rs.CurveClosestPoint(self.obj, pt)
+        else:
+            self.error("not a curve")
+            return None
 
+    def tessellate(self, num):
+        """Tessellate curve.
+        num: number of points
+             if <= 1 points with num distance in nomalized t"""
+        if self.is_curve():
+            if num <= 1.0:
+                seglen = num*rs.CurveLength(self.obj)
+                return rs.DivideCurveLength(self.obj, seglen)
+            else:
+                return rs.DivideCurve(self.obj, num-1)
+        else:
+            self.error("not a curve")
+            return None
+
+    def _param_from_normalized(self, t):
+        domain = rs.CurveDomain(self.obj)
+        return domain[0] + t*(domain[1]-domain[0])
+
+
+    # ###########################################
+    # Surface Methods
+
+
+    # ###########################################
+    # Transformations
+
+    # def transform_shape(self, matrix):
+    #     self.obj.transformShape()
+
+    def transform_geometry(self, mat):
+        rs.TransformObject(self.obj, mat.tolist())
 
 
 # ############################################################################
@@ -464,3 +632,5 @@ clear_selection = App.clear_selection
 get_selected = Form.get_selected
 make_line = Form.make_line
 make_circle = Form.make_circle
+make_interpolation_curve = Form.make_interpolation_curve
+make_random_curve = Form.make_random_curve
