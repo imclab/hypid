@@ -34,7 +34,8 @@ __author__  = 'Stefan Hechenberger <stefan@nortd.com>'
 __version__ = '2013.02'
 __license__ = 'GPL3'
 __docformat__ = 'restructuredtext en'
-__all__ = ['clear_selection', 'get_selected', 'make_line', 'make_circle', 
+__all__ = ['get_active_view', 'refresh_view', 'view_all', 'view_selected',
+           'clear_selection', 'get_selected', 'make_line', 'make_circle', 
            'make_interpolation_curve', 'make_random_curve']
 
 
@@ -48,7 +49,14 @@ class BaseApp():
 
     # ###########################################
     # implemented in FreeCadApp, and RhinoApp
-    def clear_selection(self): pass
+    # Document Methods
+    def get_active_view(cls): pass
+    def refresh_view(cls): pass
+    def view_all(cls): pass
+    def view_selected(cls): pass
+    # Selection
+    def clear_selection(cls): pass
+
 
 
 class BaseForm():
@@ -63,11 +71,7 @@ class BaseForm():
     def make_line(cls, p1, p2): pass
     def make_circle(cls, p1, p2): pass
     def make_interpolation_curve(cls, pts): pass
-    # Document Methods
-    def get_active_view(self): pass
-    def refresh_view(self): pass
-    def view_all(self): pass
-    def view_selected(self): pass
+    def make_random_curve(cls, nPts=4, xr=(0,1), yr=(0,1), zr=(0,0), xsigma=0.5): pass
     # Selection
     def select(self, ): pass
     def unselect(self): pass
@@ -93,7 +97,7 @@ class BaseForm():
     # General Geometry Methods
 
     # Transformations
-    def transform_shape(self, mat): pass
+    # def transform_shape(self, mat): pass
     def transform_geometry(self, mat): pass
 
 
@@ -105,9 +109,46 @@ class FreeCadApp(BaseApp):
     def __init(self):
         BaseApp.__init__(self)
 
+    # ###########################################
+    # Document Methods
+
     @classmethod
-    def clear_selection(self):
+    def get_active_document(cls):
+        return FreeCAD.ActiveDocument
+
+    @classmethod
+    def get_object(cls, name):
+        return FreeCAD.ActiveDocument.getObject(name)
+
+    @classmethod
+    def get_view_object(cls, name):
+        """Get the view representation part of the object."""
+        return FreeCAD.ActiveDocument.getObject(name).ViewObject
+
+    @classmethod
+    def get_active_view(cls):
+        return FreeCAD.Gui.ActiveDocument.ActiveView
+
+    @classmethod
+    def refresh_view(cls):
+        FreeCAD.ActiveDocument.recompute()
+
+    @classmethod
+    def view_all(cls):
+        FreeCAD.Gui.SendMsgToActiveView("ViewFit")
+
+    @classmethod
+    def view_selected(cls):
+        self.error("not implemented")
+
+    # ###########################################
+    # Selection
+
+    @classmethod
+    def clear_selection(cls):
         FreeCAD.Gui.Selection.clearSelection()
+
+
 
 
 class FreeCadForm(BaseForm):
@@ -183,32 +224,6 @@ class FreeCadForm(BaseForm):
         crv.interpolate(pts)
         self.obj.Shape = crv.toShape()
         return self
-
-
-    # ###########################################
-    # Document Methods
-
-    def get_active_document(self):
-        return FreeCAD.ActiveDocument
-
-    def get_object(self, name):
-        return FreeCAD.ActiveDocument.getObject(name)
-
-    def get_view_object(self, name):
-        """Get the view representation part of the object."""
-        return FreeCAD.ActiveDocument.getObject(name).ViewObject
-
-    def get_active_view(self):
-        return FreeCAD.Gui.ActiveDocument.ActiveView
-
-    def refresh_view(self):
-        FreeCAD.ActiveDocument.recompute()
-
-    def view_all(self):
-        FreeCAD.Gui.SendMsgToActiveView("ViewFit")
-
-    def view_selected(self):
-        self.error("not implemented")
 
 
     # ###########################################
@@ -374,9 +389,33 @@ class RhinoApp(BaseApp):
     def __init__(self):
         BaseApp.__init__(self)
 
+    # ###########################################
+    # Document Methods
+
     @classmethod
-    def clear_selection(self):
+    def get_active_view(cls):
+        return rs.CurrentView()
+
+    @classmethod
+    def refresh_view(cls):
+        rs.Redraw()
+
+    @classmethod
+    def view_all(cls):
+        rs.ZoomExtents()
+
+    @classmethod
+    def view_selected(cls):
+        rs.ZoomSelected()
+
+    # ###########################################
+    # Selection
+
+    @classmethod
+    def clear_selection(cls):
         rs.UnselectAllObjects()
+
+
 
 
 class RhinoForm(BaseForm):
@@ -433,22 +472,6 @@ class RhinoForm(BaseForm):
         self.obj = rs.AddInterpCurve(pts)
         self.obj.Shape = crv.toShape()
         return self
-
-        
-    # ###########################################
-    # Document Methods
-
-    def get_active_view(self):
-        return rs.CurrentView()
-
-    def refresh_view(self):
-        rs.Redraw()
-
-    def view_all(self):
-        rs.ZoomExtents()
-
-    def view_selected(self):
-        rs.ZoomSelected()
 
 
     # ###########################################
@@ -627,6 +650,10 @@ except ImportError:
 # ############################################################################
 # Aliases of classmethods
 # App-level
+get_active_view = App.get_active_view
+refresh_view = App.refresh_view
+view_all = App.view_all
+view_selected = App.view_selected
 clear_selection = App.clear_selection
 # Factories
 get_selected = Form.get_selected
